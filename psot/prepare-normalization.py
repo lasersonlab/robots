@@ -38,7 +38,7 @@ def check_manual(df, min_volume, max_volume):
         dil_vols = df.loc[invalid, 'vol_plate1'] / factor
         num_recovered = ((dil_vols >= min_volume) & (dil_vols <= max_volume)).sum()
         print(
-            "Another {}x dilution may recover {} add'l samples".format(factor, num_recovered),
+            "Another {}x dilution of plate1 may recover {} add'l samples".format(factor, num_recovered),
             file=sys.stderr)
 
 
