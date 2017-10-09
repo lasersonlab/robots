@@ -1,2 +1,3 @@
 # robots
-Scripts for robots
+
+`psot/` -- PhIP-seq Opentrons
