@@ -30,7 +30,7 @@ with open(path, 'r') as ip:
         fields = line.split('\t')
 
         plate = fields[7]
-        if plate == 'manual':
+        if plate == 'manual' or plate == 'too_dilute' or plate == 'too_concentrated':
             continue
 
         source_well = fields[1]

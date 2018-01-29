@@ -11,9 +11,11 @@ Input is a tab-delim file with the following columns:
 
 2.  `source_well` -- the position for this serum in the source plate
 
-3.  `10k_conc` -- the concentration of antibody in the 1:10000 dilution plate
-    (µg/mL)
+3.  `source_conc_ug_ml` -- the concentration of antibody in the 1:100 dilution plate
+    (µg/mL) from which the transfer will occur
 
-4.  `100k_conc` -- the concentration of antibody in the 1:100000 dilution plate
-    (µg/mL)
 
+```
+./prepare-normalization.py -t 2 -m 2 -M 200 example/example-ELISA-input.xlsx example/example-ELISA-output.tsv
+
+```

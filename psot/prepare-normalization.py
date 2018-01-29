@@ -14,32 +14,39 @@ from itertools import product
 
 from click import command, argument, option, File
 import pandas as pd
-import numpy as np
 
 
 all_wells = ['{}{}'.format(r, c) for r, c in product('ABCDEFGH', range(1, 13))]
+reqd_cols = [
+    'sample_id', 'source_well', 'conc_plate_1_ug_ml', 'conc_plate_2_ug_ml']
 
 
 def validate_input(df):
-    assert set(['sample_id', 'source_well', 'conc_plate1', 'conc_plate2']) <= set(df.columns)
-    assert '' not in set(df.sample_id)
-    assert len(df) <= 96
-    assert set(df.source_well) <= set(all_wells)
+    if not (set(reqd_cols) <= set(df.columns)):
+        raise ValueError(
+            'Input file must contain columns: sample_id, source_well, '
+            'conc_plate_1_ug_ml, conc_plate_2_ug_ml, even if they are empty')
+    if (len(df) != 96) or (set(df.source_well) != set(all_wells)):
+        raise ValueError(
+            'Input file must contain all 96 rows representing a plate')
 
 
-def check_manual(df, min_volume, max_volume):
-    invalid = df['source_plate'] == 'manual'
-    for i, row in df[invalid].iterrows():
-        print(
-            'MANUAL: {} requires excessively large or small transfer'.format(row['sample_id']),
-            file=sys.stderr)
-    dilution_factors = [2, 3, 5, 10, 20, 50, 100, 200, 500, 1000]
-    for factor in dilution_factors:
-        dil_vols = df.loc[invalid, 'vol_plate1'] / factor
-        num_recovered = ((dil_vols >= min_volume) & (dil_vols <= max_volume)).sum()
-        print(
-            "Another {}x dilution of plate1 may recover {} add'l samples".format(factor, num_recovered),
-            file=sys.stderr)
+def check_output(df, min_volume, max_volume):
+    num_samples = df['sample_id'].notnull().sum()
+    num_valid = (df['flag'] == 'valid').sum()
+    num_invalid = (df['flag'] == 'invalid').sum()
+    num_too_dilute = (df['flag'] == 'too_dilute').sum()
+    num_too_concentrated = (df['flag'] == 'too_concentrated').sum()
+    num_empty = (df['flag'] == 'empty').sum()
+    num_weird = (df['flag'] == 'weird').sum()
+
+    print('{} samples (incl some empties)'.format(num_samples), file=sys.stderr)
+    print('{} valid'.format(num_valid), file=sys.stderr)
+    print('{} invalid'.format(num_invalid), file=sys.stderr)
+    print('{} too_dilute'.format(num_too_dilute), file=sys.stderr)
+    print('{} too_concentrated'.format(num_too_concentrated), file=sys.stderr)
+    print('{} empty'.format(num_empty), file=sys.stderr)
+    print('{} weird'.format(num_weird), file=sys.stderr)
 
 
 @command(context_settings={'help_option_names': ['-h', '--help']})
@@ -49,9 +56,12 @@ def check_manual(df, min_volume, max_volume):
         help='mass to transfer (µg)')
 @option('-m', '--min-volume', type=float, default=2,
         help='minimum transfer volume (µL)')
-@option('-M', '--max-volume', type=float, default=10,
+@option('-M', '--max-volume', type=float, default=100,
         help='maximum transfer volume (µL)')
-def main(input, output, transfer_mass, min_volume, max_volume):
+@option('--shuffle-wells', is_flag=True, help='shuffle wells')
+def main(input, output, transfer_mass, min_volume, max_volume, shuffle_wells):
+    print('Concentrations MUST be in µg/mL!\n', file=sys.stderr)
+
     if input.name.endswith('.xls') or input.name.endswith('.xlsx'):
         df = pd.read_excel(input, header=0)
     elif input.name.endswith('.tsv'):
@@ -61,40 +71,49 @@ def main(input, output, transfer_mass, min_volume, max_volume):
 
     validate_input(df)
 
-    # randomize positions
-    shuffle(all_wells)
-    df['norm_well'] = all_wells[:len(df)]
+    # randomize positions if requested
+    wells = list(df['source_well'])
+    if shuffle_wells:
+        shuffle(wells)
+    df['dest_well'] = wells
 
     # compute transfer amounts (conc. should be µg/mL)
-    df['vol_plate1'] = transfer_mass / df['conc_plate1'] * 1000 # µL
-    df['vol_plate2'] = transfer_mass / df['conc_plate2'] * 1000 # µL
+    df['transfer_vol_plate_1_ul'] = transfer_mass / df['conc_plate_1_ug_ml'] * 1000 # µL
+    df['transfer_vol_plate_2_ul'] = transfer_mass / df['conc_plate_2_ug_ml'] * 1000 # µL
 
-    # compute which plate to use for each well
+    # compute transfer plates
     # each plate can, in theory, provide a valid in-range volume...
-    p1_valid = (df['vol_plate1'] >= min_volume) & (df['vol_plate1'] <= max_volume)
-    p2_valid = (df['vol_plate2'] >= min_volume) & (df['vol_plate2'] <= max_volume)
+    p1_valid = (df['transfer_vol_plate_1_ul'] >= min_volume) & (df['transfer_vol_plate_1_ul'] <= max_volume)
+    p2_valid = (df['transfer_vol_plate_2_ul'] >= min_volume) & (df['transfer_vol_plate_2_ul'] <= max_volume)
     # ...so we keep track of which value is smaller
-    p1_lesser = df['vol_plate1'] <= df['vol_plate2']
-    df['source_plate'] = ''
+    p1_lesser = df['transfer_vol_plate_1_ul'] <= df['transfer_vol_plate_2_ul']
+
+    df['source_plate'] = None
     # for locations where where both vols are valid, pick the smaller
-    df.loc[ p1_valid &  p2_valid &  p1_lesser, 'source_plate'] = 'plate1'
-    df.loc[ p1_valid &  p2_valid & ~p1_lesser, 'source_plate'] = 'plate2'
+    df.loc[ p1_valid &  p2_valid &  p1_lesser, 'source_plate'] = 'plate_1'
+    df.loc[ p1_valid &  p2_valid & ~p1_lesser, 'source_plate'] = 'plate_2'
     # for the rest of the wells, choose whichever has a valid volume
-    df.loc[ p1_valid & ~p2_valid             , 'source_plate'] = 'plate1'
-    df.loc[~p1_valid &  p2_valid             , 'source_plate'] = 'plate2'
-    # neither plate has a valid volume
-    df.loc[~p1_valid & ~p2_valid             , 'source_plate'] = 'manual'
+    df.loc[ p1_valid & ~p2_valid             , 'source_plate'] = 'plate_1'
+    df.loc[~p1_valid &  p2_valid             , 'source_plate'] = 'plate_2'
 
-    # define transfer volume from specified plate
-    p1_rows = df.source_plate == 'plate1'
-    p2_rows = df.source_plate == 'plate2'
-    df.loc[p1_rows, 'transfer_vol'] = df.loc[p1_rows, 'vol_plate1']
-    df.loc[p2_rows, 'transfer_vol'] = df.loc[p2_rows, 'vol_plate2']
+    # add flag
+    empty = df['transfer_vol_plate_1_ul'].isnull() & df['transfer_vol_plate_2_ul'].isnull()
+    valid = p1_valid | p2_valid
+    too_dilute =       ~empty & ~valid & ((df['transfer_vol_plate_1_ul'] > max_volume) | (df['transfer_vol_plate_2_ul'] > max_volume))
+    too_concentrated = ~empty & ~valid & ((df['transfer_vol_plate_1_ul'] < min_volume) | (df['transfer_vol_plate_2_ul'] < min_volume))
+    weird = too_dilute & too_concentrated
 
-    check_manual(df, min_volume, max_volume)
+    df['flag'] = 'invalid'
+    df.loc[empty, 'flag'] = 'empty'
+    df.loc[weird, 'flag'] = 'weird'
+    df.loc[too_dilute, 'flag'] = 'too_dilute'
+    df.loc[too_concentrated, 'flag'] = 'too_concentrated'
+    df.loc[valid, 'flag'] = 'valid'
+
+    check_output(df, min_volume, max_volume)
 
     # write out data for robot protocol
-    df.to_csv(output, sep='\t', index=False)
+    df.to_csv(output, sep='\t', index=False, float_format='%.3f')
 
 
 if __name__ == '__main__':
