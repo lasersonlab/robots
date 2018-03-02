@@ -16,7 +16,12 @@ tiprack200 = containers.load('tiprack-200ul', 'C2')
 trash = containers.load('point', 'D2')
 source_plate_1 = containers.load('96-flat', 'B1')
 source_plate_2 = containers.load('96-flat', 'C1')
-dest_plate = containers.load('96-deep-well', 'D1')
+try:
+    dest_plate = containers.load('96-square-well', 'D1')
+except ValueError:
+    containers.create('96-square-well', (8, 12), (9, 9), 9, 40)
+    dest_plate = containers.load('96-square-well', 'D1')
+
 
 
 
@@ -70,6 +75,6 @@ with open(path, 'r') as ip:
 
 # commands
 if len(p20_vol) > 0:
-    p20.transfer(p20_vol, p20_from, p20_to, new_tip='always')
+    p20.transfer(p20_vol, p20_from, p20_to, new_tip='always', blow_out=True)
 if len(p200_vol) > 0:
-    p200.transfer(p200_vol, p200_from, p200_to, new_tip='always')
+    p200.transfer(p200_vol, p200_from, p200_to, new_tip='always', blow_out=True)
