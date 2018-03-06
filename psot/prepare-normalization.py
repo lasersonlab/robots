@@ -13,6 +13,7 @@ from random import shuffle
 from itertools import product
 
 from click import command, argument, option, File
+import numpy as np
 import pandas as pd
 
 
@@ -40,6 +41,11 @@ def check_output(df, min_volume, max_volume):
     num_empty = (df['flag'] == 'empty').sum()
     num_weird = (df['flag'] == 'weird').sum()
 
+    median_transfer_vol = np.median(
+        list(df[df['source_plate'] == 'plate_1']['transfer_vol_plate_1_ul']) +
+        list(df[df['source_plate'] == 'plate_2']['transfer_vol_plate_2_ul']))
+
+    print('median transfer vol = {:.0f} µL'.format(median_transfer_vol), file=sys.stderr)
     print('{} samples (incl some empties)'.format(num_samples), file=sys.stderr)
     print('{} valid'.format(num_valid), file=sys.stderr)
     print('{} invalid'.format(num_invalid), file=sys.stderr)
