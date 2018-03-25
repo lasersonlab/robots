@@ -3,7 +3,7 @@ from csv import DictReader
 
 
 # SET THIS PATH TO TSV FILE BEFORE RUNNING
-path = '/Users/laserson/repos/robots/psot/example/example-ELISA-output.tsv'
+path = 'example/example-ELISA-output.tsv'
 
 
 # containers
@@ -21,9 +21,6 @@ try:
 except ValueError:
     containers.create('96-square-well', (8, 12), (9, 9), 9, 40)
     dest_plate = containers.load('96-square-well', 'D1')
-
-
-
 
 
 # pipettes
