@@ -11,15 +11,20 @@ P20 tiprack                      P200 tiprack      waste container
                source_plate_1    source_plate_2    dest_plate
 ```
 
+NOTE: the Rainin tip boxes are not symmetric. They have notches in the sides
+that interface with the covers. Ensure that the short distance-to-notch is
+closer to you, while the longer distance to notch is towards the back of the
+robot.
+
 `source_plate_1` is typically a 1:100 dilution of serum, and `source_plate_2` is
 an additional optional plate to allow for another dilution (typically 1:10
 dilution of serum).
 
 The source plates are expected to contain at least 120 µL of fluid per well (but
 really, this is determined by the max possible volume transfer that is defined,
-typically 100 µL). The destination plate is expected to contain around 1 mL of
-fluid per well. The P200 pipette is installed on Axis A and the P20 pipette on
-Axis B.
+typically 100 µL). The destination plate is expected to contain around 100 µL
+fluid per well (which will be raised to 1 mL for the immune-complex formation).
+The P200 pipette is installed on Axis A and the P20 pipette on Axis B.
 
 
 ## Compute transfer amounts and optional plate randomization

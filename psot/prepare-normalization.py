@@ -7,15 +7,104 @@ For negative/bead-only controls, leave concentrations empty
 Concentrations are assumed to be in µg/mL
 """
 
+# THIS STRING REPRESENTS THE ACTUAL OPENTRONS PROTOCOL INTO WHICH WE EMBED
+# DATA (i.e., "execute-normalization.py")
+
+protocol = """
+from opentrons import containers, instruments
+from csv import DictReader
+from io import StringIO
+
+
+data = StringIO(\"\"\"{}\"\"\")
+
+
+# containers
+try:
+    tiprack20 = containers.load('tiprack-20ul', 'A2')
+except ValueError:
+    containers.create('tiprack-20ul', (8, 12), (9, 9), 3.5, 60)
+    tiprack20 = containers.load('tiprack-20ul', 'A2')
+tiprack200 = containers.load('tiprack-200ul', 'C2')
+trash = containers.load('point', 'D2')
+source_plate_1 = containers.load('96-flat', 'B1')
+source_plate_2 = containers.load('96-flat', 'C1')
+try:
+    dest_plate = containers.load('96-square-well', 'D1')
+except ValueError:
+    containers.create('96-square-well', (8, 12), (9, 9), 9, 40)
+    dest_plate = containers.load('96-square-well', 'D1')
+
+
+# pipettes
+p200 = instruments.Pipette(axis='a',
+                           max_volume=200,
+                           min_volume=20,
+                           tip_racks=[tiprack200],
+                           trash_container=trash)
+p20 = instruments.Pipette(axis='b',
+                          max_volume=20,
+                          min_volume=2,
+                          tip_racks=[tiprack20],
+                          trash_container=trash)
+
+
+# load transfers
+p20_from = []
+p20_to = []
+p20_vol = []
+p200_from = []
+p200_to = []
+p200_vol = []
+reader = DictReader(data, dialect='unix', delimiter='\t', strict=True)
+for row in reader:
+    if row['flag'] != 'valid':
+        continue
+
+    source_well = row['source_well']
+    dest_well = row['dest_well']
+    if row['source_plate'] == 'plate_1':
+        source_plate = source_plate_1
+        volume = float(row['transfer_vol_plate_1_ul'])
+    elif row['source_plate'] == 'plate_2':
+        source_plate = source_plate_2
+        volume = float(row['transfer_vol_plate_2_ul'])
+    else:
+        raise ValueError('strange source_plate: ' + source_plate)
+
+    if volume > 20:
+        p200_from.append(source_plate.well(source_well))
+        p200_to.append(dest_plate.well(dest_well).bottom(1))
+        p200_vol.append(volume)
+    else:
+        p20_from.append(source_plate.well(source_well))
+        p20_to.append(dest_plate.well(dest_well).bottom(1))
+        p20_vol.append(volume)
+
+
+# commands
+if len(p20_vol) > 0:
+    p20.transfer(p20_vol, p20_from, p20_to, new_tip='always', blow_out=True)
+if len(p200_vol) > 0:
+    p200.transfer(p200_vol, p200_from, p200_to, new_tip='always', blow_out=True)
+"""
+
+
+# BEGINNING OF SCRIPT FOR PREPARING NORMALIZATION
+
 
 import sys
+import os
+from os.path import join as pjoin
+from io import StringIO
 from random import shuffle, seed
 from itertools import product
 from textwrap import dedent
 
-from click import command, argument, option, File
+from click import command, option, File, Path
 import numpy as np
 import pandas as pd
+import yaml
 
 
 all_wells = lambda: ['{}{}'.format(r, c) for r, c in product('ABCDEFGH', range(1, 13))]
@@ -60,17 +149,30 @@ def set_seed(df):
 
 
 def summarize_output(df, min_volume, max_volume):
-    num_libraries = df['library_id'].notnull().sum()
-    num_valid = (df['flag'] == 'valid').sum()
-    num_invalid = (df['flag'] == 'invalid').sum()
-    num_too_dilute = (df['flag'] == 'too_dilute').sum()
-    num_too_concentrated = (df['flag'] == 'too_concentrated').sum()
-    num_empty = (df['flag'] == 'empty').sum()
-    num_weird = (df['flag'] == 'weird').sum()
+    num_libraries = df['library_id'].notnull().sum().tolist()
+    num_valid = (df['flag'] == 'valid').sum().tolist()
+    num_invalid = (df['flag'] == 'invalid').sum().tolist()
+    num_too_dilute = (df['flag'] == 'too_dilute').sum().tolist()
+    num_too_concentrated = (df['flag'] == 'too_concentrated').sum().tolist()
+    num_empty = (df['flag'] == 'empty').sum().tolist()
+    num_weird = (df['flag'] == 'weird').sum().tolist()
 
     median_transfer_vol = np.median(
         list(df[df['source_plate'] == 'plate_1']['transfer_vol_plate_1_ul']) +
-        list(df[df['source_plate'] == 'plate_2']['transfer_vol_plate_2_ul']))
+        list(df[df['source_plate'] == 'plate_2']['transfer_vol_plate_2_ul'])).tolist()
+
+    flagged_wells = list(df[df['flag'] != 'valid']['dest_well'])
+
+    summary = {
+        'median_transfer_vol': median_transfer_vol,
+        'num_libraries': num_libraries,
+        'num_valid': num_valid,
+        'num_invalid': num_invalid,
+        'num_too_dilute': num_too_dilute,
+        'num_too_concentrated': num_too_concentrated,
+        'num_empty': num_empty,
+        'num_weird': num_weird,
+        'non_valid_wells': flagged_wells}
 
     print('median transfer vol ≈ {:.0f} µL\n'.format(median_transfer_vol), file=sys.stderr)
     print('{} libraries in this plate'.format(num_libraries), file=sys.stderr)
@@ -80,11 +182,62 @@ def summarize_output(df, min_volume, max_volume):
     print('{} too_concentrated'.format(num_too_concentrated), file=sys.stderr)
     print('{} empty'.format(num_empty), file=sys.stderr)
     print('{} weird'.format(num_weird), file=sys.stderr)
+    print()
+    print('not valid dest wells: {}'.format(', '.join(flagged_wells)))
+
+    return summary
+
+
+def draw_plate(df, output_dir):
+    from bokeh.plotting import figure, output_file, save, ColumnDataSource as CDS
+    from bokeh.palettes import viridis
+    from bokeh.models import FuncTickFormatter, HoverTool
+
+    output_file(pjoin(output_dir, 'source-plate-viz.html'))
+
+    df = df.copy(deep=True)
+
+    projects = list(set(df['project']))
+    colors = viridis(len(projects))
+    df['col'] = df['source_well'].str[1:].astype(int)
+    df['row'] = df['source_well'].str[0].apply(lambda x: 'ABCDEFGH'.find(x) + 1)
+    df['color'] = df['project'].apply(lambda x: colors[projects.index(x)])
+
+    empty = df['flag'] == 'empty'
+    too_dilute = df['flag'] == 'too_dilute'
+    too_concentrated = df['flag'] == 'too_concentrated'
+    valid = df['flag'] == 'valid'
+    weird = ~valid & ~empty & ~too_dilute & ~too_concentrated
+
+    hover = HoverTool(tooltips=[
+        ('project', '@project'),
+        ('library_id', '@library_id'),
+        ('sample_id', '@sample_id'),
+        ('flag', '@flag'),
+        ('conc. plate 1', '@conc_plate_1_ug_ml µg/mL')])
+
+    p = figure(plot_width=900, plot_height=600, match_aspect=True, y_range=(9, 0), tools=[hover])
+    well_size = 50
+
+    p.square('col', 'row', source=CDS(df[empty]), size=well_size)
+    p.circle('col', 'row', source=CDS(df[too_concentrated | too_dilute]), size=well_size, fill_color='color', line_color='red', line_width=10)
+    p.circle('col', 'row', source=CDS(df[valid]), size=well_size, fill_color='color')
+    p.x('col', 'row', source=CDS(df[weird]), size=well_size, fill_color='color')
+
+    p.xaxis.axis_line_color = None
+    p.yaxis.axis_line_color = None
+    p.grid.visible = False
+    p.outline_line_color = None
+    p.xaxis.ticker = list(range(1, 13))
+    p.yaxis.ticker = list(range(1, 9))
+    p.yaxis.formatter = FuncTickFormatter(code='return "ABCDEFGH".charAt(tick - 1)')
+
+    save(p)
 
 
 @command(context_settings={'help_option_names': ['-h', '--help']})
-@argument('input', type=File('rb'))
-@argument('output', type=File('w'))
+@option('-i', '--input', type=File('rb'))
+@option('-o', '--output-dir', type=Path(exists=False))
 @option('-t', '--transfer-mass', type=float, default=2,
         help='mass to transfer (µg)')
 @option('-m', '--min-volume', type=float, default=2,
@@ -93,7 +246,7 @@ def summarize_output(df, min_volume, max_volume):
         help='maximum transfer volume (µL)')
 @option('--shuffle-wells', is_flag=True,
         help='shuffle wells (deterministically using list of identifiers)')
-def main(input, output, transfer_mass, min_volume, max_volume, shuffle_wells):
+def main(input, output_dir, transfer_mass, min_volume, max_volume, shuffle_wells):
     print(dedent("""
                     **************************************
                     *                                    *
@@ -150,10 +303,26 @@ def main(input, output, transfer_mass, min_volume, max_volume, shuffle_wells):
     df.loc[too_concentrated, 'flag'] = 'too_concentrated'
     df.loc[valid, 'flag'] = 'valid'
 
-    summarize_output(df, min_volume, max_volume)
+    os.mkdir(output_dir, mode=0o755)
+
+    summary = summarize_output(df, min_volume, max_volume)
+    summary['invocation'] = ' '.join(sys.argv)
+    with open(pjoin(output_dir, 'summary.yaml'), 'w') as op:
+        print(yaml.dump(summary, default_flow_style=False), file=op)
 
     # write out data for robot protocol
-    df.to_csv(output, sep='\t', index=False, float_format='%.3f')
+    df.to_csv(pjoin(output_dir, 'plate-normalization.tsv'),
+              sep='\t', index=False, float_format='%.3f')
+
+    # write python file with data encoded into it
+    with open(pjoin(output_dir, 'execute-normalization.py'), 'w') as op:
+        cols = ['flag', 'source_well', 'dest_well', 'source_plate',
+                'transfer_vol_plate_1_ul', 'transfer_vol_plate_2_ul']
+        buf = StringIO()
+        df.to_csv(buf, columns=cols, sep='\t', index=False, float_format='%.3f')
+        print(protocol.format(buf.getvalue()), file=op)
+
+    draw_plate(df, output_dir)
 
 
 if __name__ == '__main__':
