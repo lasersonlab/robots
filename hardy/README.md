@@ -43,6 +43,12 @@ Need a CSV/TSV/Excel file with at least the following columns:
 3. `source_well`: position of sample in the source plate
 4. `conc_ug_ml`: concentration of the sample (µg/mL)
 
+### Installation
+
+```
+pip install git+https://github.com/lasersonlab/robots.git#subdirectory=hardy
+```
+
 ### Usage
 
 ```
