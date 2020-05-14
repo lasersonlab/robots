@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 def readme():
     with open("README.md", "r") as ip:
@@ -12,7 +12,7 @@ setup(
     url="https://github.com/lasersonlab/robots/hardy",
     author="Laserson Lab",
     classifiers=["Programming Language :: Python :: 3"],
-    py_modules=["hardy"],
+    packages=find_packages(),
     install_requires=["click", "pandas", "plotly", "pyyaml", "sample_sheet"],
-    entry_points={"console_scripts": ["hardy = hardy:cli"]},
+    entry_points={"console_scripts": ["hardy = hardy.cli:cli"]},
 )

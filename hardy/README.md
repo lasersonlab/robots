@@ -43,6 +43,18 @@ Need a CSV/TSV/Excel file with at least the following columns:
 3. `source_well`: position of sample in the source plate
 4. `conc_ug_ml`: concentration of the sample (µg/mL)
 
+Useful Excel formula for sanitizing `library_id` values:
+
+```
+# C46 is the "project" and "B46" is the sample identifier
+=SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(CONCATENATE(C46, "_", B46), " ", "_"), "#", ""), "-", "_"), ",", "")
+
+# Adding in a healthy control library_id
+=SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(CONCATENATE("phip_35_hc_", B3), " ", "_"), "#", ""), "-", "_")
+
+# beads only library_ids are created manually
+```
+
 ### Installation
 
 ```
